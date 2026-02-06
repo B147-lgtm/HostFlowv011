@@ -1,0 +1,8 @@
+{
+  "name": "HostFlow CRM",
+  "description": "A sophisticated CRM and management dashboard for Airbnb hosts, featuring guest identity verification, inventory tracking, and financial reconciliation.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
