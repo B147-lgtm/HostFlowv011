@@ -9,7 +9,8 @@ import {
   ArrowRight,
   ShieldCheck,
   User,
-  CheckCircle2
+  CheckCircle2,
+  Info
 } from 'lucide-react';
 import { cloudSync } from '../services/cloudService';
 
@@ -22,6 +23,7 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
   
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -31,21 +33,32 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
     e.preventDefault();
     setError(null);
     setSuccess(null);
+    setInfo(null);
     setIsLoading(true);
 
     try {
       if (isLogin) {
         // Sign In Flow
-        const data = await cloudSync.login(email, password);
-        if (data) {
-          onLogin(email, password, data);
-        } else {
-          setError("Login unsuccessful. Please verify your credentials.");
+        try {
+          const data = await cloudSync.login(email, password);
+          if (data) {
+            onLogin(email, password, data);
+          } else {
+            setError("Session could not be established. Please try again.");
+            setIsLoading(false);
+          }
+        } catch (loginErr: any) {
+          if (loginErr.message?.toLowerCase().includes("email not confirmed")) {
+            setInfo("Your email is not verified yet. Please check your inbox for a confirmation link.");
+          } else if (loginErr.message?.toLowerCase().includes("invalid login")) {
+            setError("Invalid email or password. Please double check your credentials.");
+          } else {
+            setError(loginErr.message || "Login unsuccessful.");
+          }
           setIsLoading(false);
         }
       } else {
         // Registration Flow
-        // We use a default initial state for new users
         const initialState = {
           properties: [],
           activePropertyId: 'all',
@@ -63,31 +76,32 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
           userName: name
         };
 
-        const success = await cloudSync.createAccount(email, password, initialState);
-        if (success) {
-          setSuccess("Account created successfully! Attempting to sign you in...");
-          // Attempt immediate login after signup
-          const data = await cloudSync.login(email, password);
-          if (data) {
-            setTimeout(() => onLogin(email, password, data), 1500);
+        const result = await cloudSync.createAccount(email, password, initialState);
+        
+        if (result.success) {
+          if (result.confirmationRequired) {
+            setSuccess("Account created! Please check your email for a verification link to activate your vault.");
+            setIsLogin(true); // Switch to login so they can sign in after verifying
           } else {
-            setSuccess("Account created! Please sign in with your new credentials.");
-            setIsLogin(true);
-            setIsLoading(false);
+            setSuccess("Account created successfully! Auto-signing you in...");
+            const data = await cloudSync.login(email, password);
+            if (data) {
+              setTimeout(() => onLogin(email, password, data), 1500);
+            }
           }
         } else {
-          setError("Registration failed. Email might already be in use or password too weak.");
-          setIsLoading(false);
+          setError(result.error || "Registration failed. Please check your details.");
         }
+        setIsLoading(false);
       }
     } catch (err) {
-      setError("A connection error occurred. Please check your Supabase configuration.");
+      setError("An unexpected connection error occurred.");
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-[#f9fafb] flex items-center justify-center p-6 font-inter text-slate-900 selection:bg-emerald-100">
+    <div className="min-h-screen bg-[#f9fafb] flex items-center justify-center p-6 font-inter text-slate-900">
       <div className="max-w-md w-full animate-in fade-in duration-1000">
         {/* Brand Header */}
         <div className="text-center mb-12 space-y-4">
@@ -104,7 +118,7 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
         </div>
 
         {/* Auth Card */}
-        <div className="bg-white rounded-[3.5rem] shadow-[0_40px_100px_-20px_rgba(0,0,0,0.05),0_0_1px_rgba(0,0,0,0.1)] p-10 md:p-14 border border-slate-100">
+        <div className="bg-white rounded-[3.5rem] shadow-[0_40px_100px_-20px_rgba(0,0,0,0.05)] p-10 md:p-14 border border-slate-100">
           <div className="text-center mb-10">
              <h2 className="text-3xl font-black text-slate-900 tracking-tight uppercase">
                {isLogin ? 'Welcome Back' : 'Create Account'}
@@ -122,9 +136,16 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
           )}
 
           {success && (
-            <div className="mb-8 p-4 bg-emerald-50 border border-emerald-100 rounded-2xl text-emerald-600 text-[10px] font-black uppercase tracking-widest flex items-center gap-3 animate-in slide-in-from-top-2">
+            <div className="mb-8 p-4 bg-emerald-50 border border-emerald-100 rounded-2xl text-emerald-600 text-[10px] font-black uppercase tracking-widest flex items-center gap-3 animate-in slide-in-from-top-2 text-center">
               <CheckCircle2 className="w-4 h-4 shrink-0" />
               {success}
+            </div>
+          )}
+
+          {info && (
+            <div className="mb-8 p-4 bg-blue-50 border border-blue-100 rounded-2xl text-blue-600 text-[10px] font-black uppercase tracking-widest flex items-center gap-3 animate-in slide-in-from-top-2">
+              <Info className="w-4 h-4 shrink-0" />
+              {info}
             </div>
           )}
 
@@ -136,7 +157,7 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
                   required 
                   type="text" 
                   placeholder="Full Name" 
-                  className="w-full pl-14 pr-6 py-5 bg-slate-50 border border-transparent rounded-2xl outline-none focus:bg-white focus:border-emerald-500/20 focus:ring-4 focus:ring-emerald-500/5 font-bold transition-all text-sm placeholder:text-slate-300" 
+                  className="w-full pl-14 pr-6 py-5 bg-slate-50 border border-transparent rounded-2xl outline-none focus:bg-white focus:border-emerald-500/20 font-bold transition-all text-sm placeholder:text-slate-300" 
                   value={name} 
                   onChange={e => setName(e.target.value)} 
                 />
@@ -149,7 +170,7 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
                 required 
                 type="email" 
                 placeholder="Email Address" 
-                className="w-full pl-14 pr-6 py-5 bg-slate-50 border border-transparent rounded-2xl outline-none focus:bg-white focus:border-emerald-500/20 focus:ring-4 focus:ring-emerald-500/5 font-bold transition-all text-sm placeholder:text-slate-300" 
+                className="w-full pl-14 pr-6 py-5 bg-slate-50 border border-transparent rounded-2xl outline-none focus:bg-white focus:border-emerald-500/20 font-bold transition-all text-sm placeholder:text-slate-300" 
                 value={email} 
                 onChange={e => setEmail(e.target.value)} 
               />
@@ -161,7 +182,7 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
                 required 
                 type="password" 
                 placeholder="Password" 
-                className="w-full pl-14 pr-6 py-5 bg-slate-50 border border-transparent rounded-2xl outline-none focus:bg-white focus:border-emerald-500/20 focus:ring-4 focus:ring-emerald-500/5 font-bold transition-all text-sm placeholder:text-slate-300" 
+                className="w-full pl-14 pr-6 py-5 bg-slate-50 border border-transparent rounded-2xl outline-none focus:bg-white focus:border-emerald-500/20 font-bold transition-all text-sm placeholder:text-slate-300" 
                 value={password} 
                 onChange={e => setPassword(e.target.value)} 
               />
@@ -182,7 +203,7 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
 
           <div className="mt-8 text-center">
             <button 
-              onClick={() => { setIsLogin(!isLogin); setError(null); setSuccess(null); }}
+              onClick={() => { setIsLogin(!isLogin); setError(null); setSuccess(null); setInfo(null); }}
               className="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-emerald-600 transition-colors"
             >
               {isLogin ? "Don't have an account? Register" : "Already have an account? Sign In"}
@@ -195,13 +216,6 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
               Secure Encrypted Portal
             </div>
           </div>
-        </div>
-
-        {/* Footer */}
-        <div className="text-center mt-12">
-          <p className="text-[9px] text-slate-300 font-black uppercase tracking-[0.2em]">
-            HostFlow &copy; 2025 • Bespoke Hospitality Suite
-          </p>
         </div>
       </div>
     </div>

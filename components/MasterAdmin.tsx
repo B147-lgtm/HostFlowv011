@@ -42,6 +42,7 @@ const MasterAdmin: React.FC<{ onExit: () => void }> = ({ onExit }) => {
 
   const loadAccounts = async () => {
     setIsLoading(true);
+    // adminListAccounts added to cloudSync in cloudService.ts
     const data = await cloudSync.adminListAccounts();
     setAccounts(data);
     setIsLoading(false);
@@ -49,6 +50,7 @@ const MasterAdmin: React.FC<{ onExit: () => void }> = ({ onExit }) => {
 
   const handleInspect = async (email: string) => {
     setIsInspecting(true);
+    // adminGetUserData added to cloudSync in cloudService.ts
     const data = await cloudSync.adminGetUserData(email);
     setInspectedUser({ email, data });
     setIsInspecting(false);
@@ -56,6 +58,7 @@ const MasterAdmin: React.FC<{ onExit: () => void }> = ({ onExit }) => {
 
   const handleDelete = async (email: string) => {
     if (confirm(`Permanently WIPE this account? All cloud data for ${email} will be erased forever.`)) {
+      // adminDeleteAccount added to cloudSync in cloudService.ts
       await cloudSync.adminDeleteAccount(email);
       loadAccounts();
     }
@@ -83,13 +86,14 @@ const MasterAdmin: React.FC<{ onExit: () => void }> = ({ onExit }) => {
       properties: [], allBookings: [], allTransactions: [], allGuests: [], allStaffLogs: [], allInventory: [] 
     };
 
-    const success = await cloudSync.createAccount(email, password, initialData);
-    if (success) {
+    // Correctly handle the result object from createAccount
+    const result = await cloudSync.createAccount(email, password, initialData);
+    if (result.success) {
       setNewUserData({ email: '', password: '', name: '' });
       setShowAddUser(false);
       loadAccounts();
     } else {
-      alert("Failed to create account. Email may already exist.");
+      alert(result.error || "Failed to create account. Email may already exist.");
     }
     setIsLoading(false);
   };

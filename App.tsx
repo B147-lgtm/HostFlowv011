@@ -85,6 +85,7 @@ const App: React.FC = () => {
   const [allStaffLogs, setAllStaffLogs] = useState<StaffLog[]>([]);
   const [allInventory, setAllInventory] = useState<InventoryItem[]>([]); 
   const [stayPackages, setStayPackages] = useState<StayPackage[]>(DEFAULT_PACKAGES);
+  const [currentUserEmail, setCurrentUserEmail] = useState<string>(MASTER_EMAIL);
   
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [showAddPropertyModal, setShowAddPropertyModal] = useState(false);
@@ -131,6 +132,7 @@ const App: React.FC = () => {
     if (data.allStaffLogs) setAllStaffLogs(data.allStaffLogs);
     if (data.stayPackages) setStayPackages(data.stayPackages);
     if (data.activePropertyId) setActivePropertyId(data.activePropertyId);
+    if (data.userEmail) setCurrentUserEmail(data.userEmail);
 
     const propId = data.activePropertyId || (data.properties?.[0]?.id) || 'prop-1';
     let inv = data.allInventory || [];
@@ -161,6 +163,7 @@ const App: React.FC = () => {
         allStaffLogs, 
         allInventory, 
         stayPackages,
+        userEmail: currentUserEmail,
         timestamp: Date.now()
       };
 
@@ -186,10 +189,11 @@ const App: React.FC = () => {
         setIsSyncing(false);
       }, 2500);
     }
-  }, [properties, activePropertyId, allBookings, allTransactions, allGuests, allStaffLogs, allInventory, stayPackages, isAuthenticated, isInitialLoading, isReadyForSync]);
+  }, [properties, activePropertyId, allBookings, allTransactions, allGuests, allStaffLogs, allInventory, stayPackages, isAuthenticated, isInitialLoading, isReadyForSync, currentUserEmail]);
 
   const handleLogin = (email: string, password: string, remoteData: any) => {
     setIsAuthenticated(true);
+    setCurrentUserEmail(email);
     rehydrateState(remoteData);
     setIsReadyForSync(true); 
   };
@@ -344,7 +348,7 @@ const App: React.FC = () => {
           <div className="flex items-center gap-6">
             <div className="hidden sm:flex flex-col text-right">
                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 leading-none mb-1">Production Node</p>
-               <p className="text-xs font-black text-slate-900">{MASTER_EMAIL}</p>
+               <p className="text-xs font-black text-slate-900">{currentUserEmail}</p>
             </div>
             <button className="p-3 bg-slate-50 rounded-2xl text-slate-400 hover:text-indigo-600 relative transition-colors">
               <Bell className="w-5 h-5" /><span className="absolute top-3.5 right-3.5 w-2.5 h-2.5 bg-rose-500 rounded-full border-2 border-white" />
@@ -360,7 +364,7 @@ const App: React.FC = () => {
           <div className="bg-white w-full max-w-xl rounded-[3rem] shadow-2xl overflow-hidden animate-in zoom-in-95 relative">
             <button onClick={() => setShowAddPropertyModal(false)} className="absolute top-6 right-6 p-2 bg-slate-50 hover:bg-slate-100 rounded-full transition-colors text-slate-400 z-10"><X className="w-6 h-6" /></button>
             <div className="p-10">
-              <Onboarding isModal onComplete={handleAddProperty} defaultManager={{ name: 'Admin', email: MASTER_EMAIL, phone: '98290-52963' }} />
+              <Onboarding isModal onComplete={handleAddProperty} defaultManager={{ name: 'Admin', email: currentUserEmail, phone: '98290-52963' }} />
             </div>
           </div>
         </div>

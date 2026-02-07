@@ -4,7 +4,7 @@ import { supabase } from './supabaseClient';
 export const MASTER_EMAIL = "badal.london@gmail.com";
 
 // Default state structure for new users
-const getInitialState = () => ({
+const getInitialState = (email?: string, name?: string) => ({
   properties: [],
   activePropertyId: 'all',
   allBookings: [],
@@ -17,7 +17,9 @@ const getInitialState = () => ({
     { id: 'p2', title: 'Premium Suite', desc: 'Luxury quarters upgrade.', iconType: 'star' },
     { id: 'p3', title: 'Event Hall', desc: 'Access to gardens and main hall.', iconType: 'sparkles' }
   ],
-  timestamp: Date.now()
+  timestamp: Date.now(),
+  userEmail: email,
+  userName: name
 });
 
 export const cloudSync = {
@@ -37,15 +39,21 @@ export const cloudSync = {
    */
   async login(email: string, password: string): Promise<any | null> {
     if (!supabase) {
-      console.error("Supabase client not initialized. Check your environment variables.");
+      console.error("Supabase client not initialized.");
       return null;
     }
+    
     const { data, error } = await supabase.auth.signInWithPassword({
       email: email.trim().toLowerCase(),
       password: password.trim()
     });
 
-    if (error || !data.user) return null;
+    if (error) {
+      console.error("Login error:", error.message);
+      throw error; 
+    }
+
+    if (!data.user) return null;
 
     return this.fetchVault(data.user.id);
   },
@@ -58,42 +66,62 @@ export const cloudSync = {
   },
 
   /**
-   * Register new user and initialize vault
+   * Register new user
    */
-  async createAccount(email: string, password: string, initialState: any): Promise<boolean> {
-    if (!supabase) return false;
+  async createAccount(email: string, password: string, initialState: any): Promise<{success: boolean, confirmationRequired: boolean, error?: string}> {
+    if (!supabase) return { success: false, confirmationRequired: false, error: "Supabase not connected" };
+    
     const { data, error } = await supabase.auth.signUp({
       email: email.trim().toLowerCase(),
-      password: password.trim()
+      password: password.trim(),
+      options: {
+        data: {
+          full_name: initialState.userName || 'New Host'
+        }
+      }
     });
 
-    if (error || !data.user) {
-      console.error("Sign up failed:", error?.message);
-      return false;
+    if (error) {
+      console.error("Sign up error:", error.message);
+      return { success: false, confirmationRequired: false, error: error.message };
     }
 
-    // Initialize the vault row immediately
-    const success = await this.pushData(initialState);
-    return success;
+    // If session is present, initialize the vault immediately
+    if (data.session && data.user) {
+      await this.pushData(initialState, data.user.id);
+      return { success: true, confirmationRequired: false };
+    }
+
+    // If confirmation is required
+    if (data.user) {
+      return { success: true, confirmationRequired: true };
+    }
+
+    return { success: false, confirmationRequired: false, error: "Unknown registration error" };
   },
 
   /**
    * Save app state to Postgres
    */
-  async pushData(state: any): Promise<boolean> {
+  async pushData(state: any, userId?: string): Promise<boolean> {
     if (!supabase) return false;
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return false;
+    
+    let targetUserId = userId;
+    if (!targetUserId) {
+      const { data: { user } } = await supabase.auth.getUser();
+      targetUserId = user?.id;
+    }
+    
+    if (!targetUserId) return false;
 
-    // Use Postgres JSONB Upsert
     const { error } = await supabase
       .from('vaults')
       .upsert({
-        user_id: user.id,
+        user_id: targetUserId,
         state: state,
         last_synced: new Date().toISOString(),
-        app_version: 'v39'
-      }, { onConflict: 'user_id' });
+        app_version: 'v40'
+      });
 
     if (error) {
       console.error("Cloud push failed:", error.message);
@@ -107,6 +135,7 @@ export const cloudSync = {
    */
   async fetchVault(userId: string): Promise<any | null> {
     if (!supabase) return null;
+    
     const { data, error } = await supabase
       .from('vaults')
       .select('state')
@@ -118,28 +147,73 @@ export const cloudSync = {
       return null;
     }
 
-    // If no row exists, initialize it
+    // If no row exists, initialize it with default data
     if (!data) {
-      const freshState = getInitialState();
-      await this.pushData(freshState);
-      return freshState;
+      console.log("Initializing new vault for user...");
+      const { data: { user } } = await supabase.auth.getUser();
+      const freshState = getInitialState(user?.email, user?.user_metadata?.full_name);
+      const pushed = await this.pushData(freshState, userId);
+      return pushed ? freshState : null;
     }
 
     return data.state;
   },
 
   /**
-   * Admin Tools
+   * Admin: List all accounts (based on vaults)
    */
   async adminListAccounts(): Promise<any[]> {
-    return [];
+    if (!supabase) return [];
+    
+    const { data, error } = await supabase
+      .from('vaults')
+      .select('user_id, last_synced, state');
+
+    if (error) {
+      console.error("Admin list error:", error.message);
+      return [];
+    }
+
+    return data.map(row => ({
+      email: row.state?.userEmail || `User ${row.user_id.slice(0, 8)}`,
+      createdAt: row.last_synced,
+      password: "••••••••", // Password not accessible via client SDK for security
+      userId: row.user_id
+    }));
   },
 
+  /**
+   * Admin: Get specific user state
+   */
   async adminGetUserData(email: string): Promise<any | null> {
-    return null;
+    if (!supabase) return null;
+    
+    const { data, error } = await supabase
+      .from('vaults')
+      .select('state');
+
+    if (error) return null;
+    
+    const vault = data.find(v => v.state?.userEmail?.toLowerCase() === email.toLowerCase());
+    return vault ? vault.state : null;
   },
 
+  /**
+   * Admin: Delete account vault
+   */
   async adminDeleteAccount(email: string): Promise<boolean> {
-    return false;
+    if (!supabase) return false;
+
+    const { data: vaults } = await supabase.from('vaults').select('user_id, state');
+    const target = vaults?.find(v => v.state?.userEmail?.toLowerCase() === email.toLowerCase());
+    
+    if (!target) return false;
+
+    const { error } = await supabase
+      .from('vaults')
+      .delete()
+      .eq('user_id', target.user_id);
+
+    return !error;
   }
 };
