@@ -3,6 +3,11 @@ import { supabase } from './supabaseClient';
 
 export const MASTER_EMAIL = "badal.london@gmail.com";
 
+// Add never properties to help TypeScript discriminate the union effectively
+export type LoginResult = 
+  | { ok: true; state: any; warning?: string; error?: never } 
+  | { ok: false; error: string; state?: never; warning?: never };
+
 // Default state structure for new users
 const getInitialState = (email?: string, name?: string) => ({
   properties: [],
@@ -31,31 +36,52 @@ export const cloudSync = {
     const { data: { session }, error } = await supabase.auth.getSession();
     if (error || !session) return null;
 
-    return this.fetchVault(session.user.id);
+    try {
+      return await this.fetchVault(session.user.id);
+    } catch (e) {
+      console.warn("Resuming session but vault fetch failed, using fallback.");
+      return getInitialState(session.user.email, session.user.user_metadata?.full_name);
+    }
   },
 
   /**
    * Login with Supabase Auth
+   * Updated to never return null if Auth succeeds, ensuring dashboard access.
    */
-  async login(email: string, password: string): Promise<any | null> {
+  async login(email: string, password: string): Promise<LoginResult> {
     if (!supabase) {
-      console.error("Supabase client not initialized.");
-      return null;
+      return { ok: false, error: "Supabase client not initialized." };
     }
     
-    const { data, error } = await supabase.auth.signInWithPassword({
+    console.log("Supabase Auth Request: Login attempt for", email);
+    const { data, error: authError } = await supabase.auth.signInWithPassword({
       email: email.trim().toLowerCase(),
       password: password.trim()
     });
 
-    if (error) {
-      console.error("Login error:", error.message);
-      throw error; 
+    if (authError) {
+      console.error("Supabase Auth Error:", authError.status, authError.message);
+      return { ok: false, error: authError.message };
     }
 
-    if (!data.user) return null;
+    if (!data.user) {
+      return { ok: false, error: "Authentication succeeded but no user was returned." };
+    }
 
-    return this.fetchVault(data.user.id);
+    console.log("Supabase Auth Success: User ID", data.user.id);
+
+    try {
+      const state = await this.fetchVault(data.user.id);
+      return { ok: true, state };
+    } catch (vaultError: any) {
+      console.error("Vault Access Error (RLS or Fetch):", vaultError.message);
+      // If Auth succeeded but vault failed, provide initial state to avoid locking user out
+      return { 
+        ok: true, 
+        state: getInitialState(data.user.email, data.user.user_metadata?.full_name),
+        warning: `Database sync limited: ${vaultError.message}`
+      };
+    }
   },
 
   /**
@@ -71,7 +97,8 @@ export const cloudSync = {
   async createAccount(email: string, password: string, initialState: any): Promise<{success: boolean, confirmationRequired: boolean, error?: string}> {
     if (!supabase) return { success: false, confirmationRequired: false, error: "Supabase not connected" };
     
-    const { data, error } = await supabase.auth.signUp({
+    console.log("Supabase Auth Request: SignUp attempt for", email);
+    const { data, error: signUpError } = await supabase.auth.signUp({
       email: email.trim().toLowerCase(),
       password: password.trim(),
       options: {
@@ -81,23 +108,25 @@ export const cloudSync = {
       }
     });
 
-    if (error) {
-      console.error("Sign up error:", error.message);
-      return { success: false, confirmationRequired: false, error: error.message };
+    if (signUpError) {
+      console.error("Supabase SignUp Error:", signUpError.status, signUpError.message);
+      return { success: false, confirmationRequired: false, error: signUpError.message };
     }
 
-    // If session is present, initialize the vault immediately
+    // If session is present, they are logged in immediately
     if (data.session && data.user) {
+      console.log("Supabase SignUp: Immediate session established.");
       await this.pushData(initialState, data.user.id);
       return { success: true, confirmationRequired: false };
     }
 
-    // If confirmation is required
+    // If user is present but no session, confirmation is required
     if (data.user) {
+      console.log("Supabase SignUp: User created, confirmation required.");
       return { success: true, confirmationRequired: true };
     }
 
-    return { success: false, confirmationRequired: false, error: "Unknown registration error" };
+    return { success: false, confirmationRequired: false, error: "Unknown registration result." };
   },
 
   /**
@@ -124,7 +153,7 @@ export const cloudSync = {
       });
 
     if (error) {
-      console.error("Cloud push failed:", error.message);
+      console.error("Supabase Vault Upsert Error:", error.message);
       return false;
     }
     return true;
@@ -143,77 +172,50 @@ export const cloudSync = {
       .maybeSingle();
 
     if (error) {
-      console.error("Vault fetch error:", error.message);
-      return null;
+      console.error("Supabase Vault Select Error:", error.message);
+      throw error;
     }
 
-    // If no row exists, initialize it with default data
     if (!data) {
-      console.log("Initializing new vault for user...");
+      console.log("Vault empty. Provisioning new row...");
       const { data: { user } } = await supabase.auth.getUser();
       const freshState = getInitialState(user?.email, user?.user_metadata?.full_name);
-      const pushed = await this.pushData(freshState, userId);
-      return pushed ? freshState : null;
+      await this.pushData(freshState, userId);
+      return freshState;
     }
 
     return data.state;
   },
 
   /**
-   * Admin: List all accounts (based on vaults)
+   * Admin Tools
    */
   async adminListAccounts(): Promise<any[]> {
     if (!supabase) return [];
-    
-    const { data, error } = await supabase
-      .from('vaults')
-      .select('user_id, last_synced, state');
-
-    if (error) {
-      console.error("Admin list error:", error.message);
-      return [];
-    }
-
+    const { data, error } = await supabase.from('vaults').select('user_id, last_synced, state');
+    if (error) return [];
     return data.map(row => ({
       email: row.state?.userEmail || `User ${row.user_id.slice(0, 8)}`,
       createdAt: row.last_synced,
-      password: "••••••••", // Password not accessible via client SDK for security
+      password: "••••••••", 
       userId: row.user_id
     }));
   },
 
-  /**
-   * Admin: Get specific user state
-   */
   async adminGetUserData(email: string): Promise<any | null> {
     if (!supabase) return null;
-    
-    const { data, error } = await supabase
-      .from('vaults')
-      .select('state');
-
+    const { data, error } = await supabase.from('vaults').select('state');
     if (error) return null;
-    
     const vault = data.find(v => v.state?.userEmail?.toLowerCase() === email.toLowerCase());
     return vault ? vault.state : null;
   },
 
-  /**
-   * Admin: Delete account vault
-   */
   async adminDeleteAccount(email: string): Promise<boolean> {
     if (!supabase) return false;
-
     const { data: vaults } = await supabase.from('vaults').select('user_id, state');
     const target = vaults?.find(v => v.state?.userEmail?.toLowerCase() === email.toLowerCase());
-    
     if (!target) return false;
-
-    const { error } = await supabase
-      .from('vaults')
-      .delete()
-      .eq('user_id', target.user_id);
-
+    const { error } = await supabase.from('vaults').delete().eq('user_id', target.user_id);
     return !error;
   }
 };

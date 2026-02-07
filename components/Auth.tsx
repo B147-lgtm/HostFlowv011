@@ -38,27 +38,28 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
 
     try {
       if (isLogin) {
-        // Sign In Flow
-        try {
-          const data = await cloudSync.login(email, password);
-          if (data) {
-            onLogin(email, password, data);
-          } else {
-            setError("Session could not be established. Please try again.");
-            setIsLoading(false);
+        // --- LOGIN FLOW ---
+        const result = await cloudSync.login(email, password);
+        
+        if (result.ok) {
+          if (result.warning) {
+            console.warn("Auth warning:", result.warning);
           }
-        } catch (loginErr: any) {
-          if (loginErr.message?.toLowerCase().includes("email not confirmed")) {
-            setInfo("Your email is not verified yet. Please check your inbox for a confirmation link.");
-          } else if (loginErr.message?.toLowerCase().includes("invalid login")) {
-            setError("Invalid email or password. Please double check your credentials.");
+          // Successfully authenticated, move to dashboard
+          onLogin(email, password, result.state);
+        } else {
+          const msg = result.error.toLowerCase();
+          if (msg.includes("email not confirmed")) {
+            setInfo("Email confirmation required. Please check your inbox or disable 'Confirm Email' in Supabase dashboard.");
+          } else if (msg.includes("invalid login")) {
+            setError("Invalid login credentials. Please double check your email and password.");
           } else {
-            setError(loginErr.message || "Login unsuccessful.");
+            setError(result.error);
           }
           setIsLoading(false);
         }
       } else {
-        // Registration Flow
+        // --- SIGNUP FLOW ---
         const initialState = {
           properties: [],
           activePropertyId: 'all',
@@ -73,29 +74,36 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
             { id: 'p3', title: 'Event Hall', desc: 'Access to gardens and main hall.', iconType: 'sparkles' }
           ],
           timestamp: Date.now(),
-          userName: name
+          userName: name,
+          userEmail: email.trim().toLowerCase()
         };
 
         const result = await cloudSync.createAccount(email, password, initialState);
         
         if (result.success) {
           if (result.confirmationRequired) {
-            setSuccess("Account created! Please check your email for a verification link to activate your vault.");
-            setIsLogin(true); // Switch to login so they can sign in after verifying
+            setSuccess("Account created! Check your email for a confirmation link to activate your dashboard.");
+            setIsLogin(true);
+            setIsLoading(false);
           } else {
-            setSuccess("Account created successfully! Auto-signing you in...");
-            const data = await cloudSync.login(email, password);
-            if (data) {
-              setTimeout(() => onLogin(email, password, data), 1500);
+            // Auto-login happened
+            setSuccess("Account initialized! Launching dashboard...");
+            const loginRes = await cloudSync.login(email, password);
+            if (loginRes.ok) {
+              onLogin(email, password, loginRes.state);
+            } else {
+              setError("Account created but auto-login failed: " + loginRes.error);
+              setIsLoading(false);
             }
           }
         } else {
-          setError(result.error || "Registration failed. Please check your details.");
+          setError(result.error || "Signup failed. Ensure your password is at least 6 characters.");
+          setIsLoading(false);
         }
-        setIsLoading(false);
       }
-    } catch (err) {
-      setError("An unexpected connection error occurred.");
+    } catch (err: any) {
+      console.error("Critical Auth UI Error:", err);
+      setError("A critical system error occurred: " + (err.message || "Unknown error"));
       setIsLoading(false);
     }
   };
@@ -131,7 +139,7 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
           {error && (
             <div className="mb-8 p-4 bg-rose-50 border border-rose-100 rounded-2xl text-rose-600 text-[10px] font-black uppercase tracking-widest flex items-center gap-3 animate-in slide-in-from-top-2">
               <AlertCircle className="w-4 h-4 shrink-0" />
-              {error}
+              <span className="break-words">{error}</span>
             </div>
           )}
 

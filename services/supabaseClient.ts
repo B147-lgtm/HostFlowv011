@@ -3,20 +3,15 @@ import { createClient } from '@supabase/supabase-js';
 
 /**
  * HostFlow Production Sync - Supabase Client
- * 
- * This client uses a resilient environment resolution strategy to handle different
- * deployment environments (Vite, custom shims, or native ESM).
  */
 
 const getSafeEnv = (key: string): string | undefined => {
-  // Try process.env (Standard Node/CommonJS/Bundler shim)
   try {
     if (typeof process !== 'undefined' && process.env && process.env[key]) {
       return process.env[key];
     }
   } catch (e) {}
 
-  // Try import.meta.env (Vite/Modern ESM)
   try {
     const metaEnv = (import.meta as any).env;
     if (metaEnv && metaEnv[key]) {
@@ -27,19 +22,20 @@ const getSafeEnv = (key: string): string | undefined => {
   return undefined;
 };
 
-// Check for both Vite-prefixed and standard environment variables
 const supabaseUrl = getSafeEnv('VITE_SUPABASE_URL') || getSafeEnv('SUPABASE_URL');
 const supabaseAnonKey = getSafeEnv('VITE_SUPABASE_ANON_KEY') || getSafeEnv('SUPABASE_ANON_KEY');
+
+// Debug output for environment state (safe)
+console.log("Supabase Client Init - URL detected:", !!supabaseUrl);
+console.log("Supabase Client Init - AnonKey detected:", !!supabaseAnonKey);
 
 if (!supabaseUrl || !supabaseAnonKey) {
   console.warn(
     "⚠️ HostFlow Warning: Supabase credentials not found.\n" +
-    "Please ensure VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are set in your environment secrets.\n" +
     "The app will run in local-only mode until credentials are provided."
   );
 }
 
-// Initialize only if we have valid credentials to prevent Supabase from throwing "required" errors
 export const supabase = (supabaseUrl && supabaseAnonKey) 
   ? createClient(supabaseUrl, supabaseAnonKey, {
       auth: {
@@ -48,4 +44,4 @@ export const supabase = (supabaseUrl && supabaseAnonKey)
         detectSessionInUrl: true
       }
     })
-  : (null as any); // Fallback to null; cloudService.ts handles null supabase gracefully
+  : (null as any);
