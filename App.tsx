@@ -35,7 +35,7 @@ import Settings from './components/Settings';
 import Auth from './components/Auth';
 import { Booking, Transaction, Guest, StaffLog, PropertyConfig, InventoryItem, StayPackage } from './types';
 import { MOCK_INVENTORY } from './constants';
-import { cloudSync, MASTER_EMAIL } from './services/cloudService';
+import { cloudSync } from './services/cloudService';
 
 enum View {
   DASHBOARD = 'Dashboard',
@@ -48,7 +48,7 @@ enum View {
   SETTINGS = 'Settings'
 }
 
-const CACHE_KEY = 'hostflow_local_cache_v39';
+const CACHE_KEY = 'hostflow_production_cache_v41';
 
 const DEFAULT_PACKAGES: StayPackage[] = [
   { id: 'p1', title: 'Basic Stay', desc: 'Standard room access.', iconType: 'home' },
@@ -85,36 +85,38 @@ const App: React.FC = () => {
   const [allStaffLogs, setAllStaffLogs] = useState<StaffLog[]>([]);
   const [allInventory, setAllInventory] = useState<InventoryItem[]>([]); 
   const [stayPackages, setStayPackages] = useState<StayPackage[]>(DEFAULT_PACKAGES);
-  const [currentUserEmail, setCurrentUserEmail] = useState<string>(MASTER_EMAIL);
+  const [currentUserEmail, setCurrentUserEmail] = useState<string>('');
   
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [showAddPropertyModal, setShowAddPropertyModal] = useState(false);
 
-  const syncTimeoutRef = useRef<number | null>(null);
-  const lastPushedStateRef = useRef<string>("");
-
-  // 1. Production Boot: Supabase Session Resume
+  // 1. App Bootstrap & Cloud Rehydration
   useEffect(() => {
     const bootstrap = async () => {
-      // Step A: Load Local Cache for instant UI
+      console.log("HostFlow: Initializing Production Handshake...");
+      
+      // Load Local Cache for instant UI splash (Non-authoritative)
       const localCache = localStorage.getItem(CACHE_KEY);
       if (localCache) {
         try {
           const cached = JSON.parse(localCache);
           rehydrateState(cached);
-        } catch (e) { console.warn("Local cache corrupt"); }
+        } catch (e) { console.warn("Local cache corrupt, ignoring."); }
       }
 
-      // Step B: Resume Supabase Session (Secure Token Exchange)
+      // Restore Supabase Session & Fetch Cloud Vault (Authoritative)
       try {
         const cloudData = await cloudSync.resumeSession();
         if (cloudData) {
+          console.log("HostFlow: Cloud session restored successfully.");
+          rehydrateState(cloudData); 
           setIsAuthenticated(true);
-          rehydrateState(cloudData); // Cloud state is authoritative
           setIsReadyForSync(true); 
+        } else {
+          console.log("HostFlow: No active session found. Routing to login.");
         }
       } catch (e) {
-        console.error("Session resume failed");
+        console.error("HostFlow Boot Error:", e);
       } finally {
         setIsInitialLoading(false);
       }
@@ -137,69 +139,62 @@ const App: React.FC = () => {
     const propId = data.activePropertyId || (data.properties?.[0]?.id) || 'prop-1';
     let inv = data.allInventory || [];
     
+    // Inject mock inventory if user has properties but no inventory list yet
     if (inv.length < 3 && data.properties?.length > 0) {
       inv = MOCK_INVENTORY.map(item => ({ ...item, propertyId: propId }));
     }
     setAllInventory(inv);
-
-    lastPushedStateRef.current = JSON.stringify({
-      properties: data.properties,
-      allBookings: data.allBookings,
-      allTransactions: data.allTransactions,
-      allGuests: data.allGuests,
-      allInventory: inv
-    });
   };
 
-  // 2. Production Autosave (Supabase Upsert)
-  useEffect(() => { 
-    if (isAuthenticated && !isInitialLoading && isReadyForSync) {
-      const currentState = {
-        properties, 
-        activePropertyId, 
-        allBookings, 
-        allTransactions, 
-        allGuests, 
-        allStaffLogs, 
-        allInventory, 
-        stayPackages,
-        userEmail: currentUserEmail,
-        timestamp: Date.now()
-      };
+  // 2. Production Autosave Effect
+  useEffect(() => {
+    if (!isAuthenticated || !isReadyForSync) return;
 
-      const currentStateString = JSON.stringify({
-        properties,
-        allBookings,
-        allTransactions,
-        allGuests,
-        allInventory
-      });
+    const stateToSave = {
+      properties,
+      activePropertyId,
+      allBookings,
+      allTransactions,
+      allGuests,
+      allStaffLogs,
+      allInventory,
+      stayPackages,
+      timestamp: Date.now()
+    };
 
-      if (currentStateString === lastPushedStateRef.current) return;
+    // Update local cache immediately for zero-latency feel
+    localStorage.setItem(CACHE_KEY, JSON.stringify(stateToSave));
 
-      localStorage.setItem(CACHE_KEY, JSON.stringify(currentState));
+    const timer = setTimeout(async () => {
+      setIsSyncing(true);
+      const ok = await cloudSync.pushData(stateToSave);
+      if (!ok) console.warn("Autosave failed");
+      setIsSyncing(false);
+    }, 700);
 
-      if (syncTimeoutRef.current) window.clearTimeout(syncTimeoutRef.current);
-      syncTimeoutRef.current = window.setTimeout(async () => {
-        setIsSyncing(true);
-        const success = await cloudSync.pushData(currentState);
-        if (success) {
-          lastPushedStateRef.current = currentStateString;
-        }
-        setIsSyncing(false);
-      }, 2500);
-    }
-  }, [properties, activePropertyId, allBookings, allTransactions, allGuests, allStaffLogs, allInventory, stayPackages, isAuthenticated, isInitialLoading, isReadyForSync, currentUserEmail]);
+    return () => clearTimeout(timer);
+  }, [
+    isAuthenticated,
+    isReadyForSync,
+    properties,
+    activePropertyId,
+    allBookings,
+    allTransactions,
+    allGuests,
+    allStaffLogs,
+    allInventory,
+    stayPackages
+  ]);
 
   const handleLogin = (email: string, password: string, remoteData: any) => {
-    setIsAuthenticated(true);
     setCurrentUserEmail(email);
     rehydrateState(remoteData);
+    setIsAuthenticated(true);
     setIsReadyForSync(true); 
   };
 
   const handleLogout = async () => {
-    if (window.confirm("Disconnect from production vault?")) {
+    if (window.confirm("Permanently disconnect this device from the production vault?")) {
       await cloudSync.logout();
       localStorage.removeItem(CACHE_KEY);
       window.location.reload();
@@ -341,7 +336,7 @@ const App: React.FC = () => {
             <button className="md:hidden p-3 bg-slate-50 rounded-xl text-slate-500" onClick={() => setIsSidebarOpen(true)}><Menu className="w-6 h-6" /></button>
             <div className={`px-5 py-2.5 rounded-2xl flex items-center gap-3 transition-all ${isSyncing ? 'bg-amber-50 border-amber-100' : 'bg-emerald-50 border-emerald-100 shadow-sm shadow-emerald-50'}`}>
                {isSyncing ? <RefreshCw className="w-3.5 h-3.5 text-amber-500 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />}
-               <span className="text-[10px] font-black uppercase text-slate-600 tracking-[0.1em]">{isSyncing ? 'Pushing to Supabase...' : 'Postgres Vault Active'}</span>
+               <span className="text-[10px] font-black uppercase text-slate-600 tracking-[0.1em]">{isSyncing ? 'Pushing to Vault...' : 'Production Vault Active'}</span>
             </div>
           </div>
           
@@ -364,7 +359,7 @@ const App: React.FC = () => {
           <div className="bg-white w-full max-w-xl rounded-[3rem] shadow-2xl overflow-hidden animate-in zoom-in-95 relative">
             <button onClick={() => setShowAddPropertyModal(false)} className="absolute top-6 right-6 p-2 bg-slate-50 hover:bg-slate-100 rounded-full transition-colors text-slate-400 z-10"><X className="w-6 h-6" /></button>
             <div className="p-10">
-              <Onboarding isModal onComplete={handleAddProperty} defaultManager={{ name: 'Admin', email: currentUserEmail, phone: '98290-52963' }} />
+              <Onboarding isModal onComplete={handleAddProperty} defaultManager={{ name: 'Admin', email: currentUserEmail, phone: '00000-00000' }} />
             </div>
           </div>
         </div>

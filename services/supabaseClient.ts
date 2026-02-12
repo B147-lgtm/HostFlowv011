@@ -26,13 +26,13 @@ const supabaseUrl = getSafeEnv('VITE_SUPABASE_URL') || getSafeEnv('SUPABASE_URL'
 const supabaseAnonKey = getSafeEnv('VITE_SUPABASE_ANON_KEY') || getSafeEnv('SUPABASE_ANON_KEY');
 
 // Debug output for environment state (safe)
-console.log("Supabase Client Init - URL detected:", !!supabaseUrl);
-console.log("Supabase Client Init - AnonKey detected:", !!supabaseAnonKey);
+console.log("Supabase Connection: " + (supabaseUrl ? "ENDPOINT_OK" : "ENDPOINT_MISSING"));
+console.log("Supabase Key: " + (supabaseAnonKey ? "KEY_OK" : "KEY_MISSING"));
 
 if (!supabaseUrl || !supabaseAnonKey) {
   console.warn(
-    "⚠️ HostFlow Warning: Supabase credentials not found.\n" +
-    "The app will run in local-only mode until credentials are provided."
+    "⚠️ HostFlow System Alert: Supabase credentials not found in environment.\n" +
+    "Cloud vault features will be disabled. App will operate in local-cache mode only."
   );
 }
 
@@ -41,7 +41,8 @@ export const supabase = (supabaseUrl && supabaseAnonKey)
       auth: {
         persistSession: true,
         autoRefreshToken: true,
-        detectSessionInUrl: true
+        detectSessionInUrl: true,
+        storage: window.localStorage // Explicitly use localStorage for persistence
       }
     })
   : (null as any);

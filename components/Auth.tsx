@@ -50,9 +50,9 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
         } else {
           const msg = result.error.toLowerCase();
           if (msg.includes("email not confirmed")) {
-            setInfo("Email confirmation required. Please check your inbox or disable 'Confirm Email' in Supabase dashboard.");
+            setInfo("Verification Required: Please check your inbox or disable 'Confirm Email' in Supabase Auth settings to activate your account.");
           } else if (msg.includes("invalid login")) {
-            setError("Invalid login credentials. Please double check your email and password.");
+            setError("Authentication Failed: The email or password provided is incorrect.");
           } else {
             setError(result.error);
           }
@@ -60,50 +60,26 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
         }
       } else {
         // --- SIGNUP FLOW ---
-        const initialState = {
-          properties: [],
-          activePropertyId: 'all',
-          allBookings: [],
-          allTransactions: [],
-          allGuests: [],
-          allStaffLogs: [],
-          allInventory: [],
-          stayPackages: [
-            { id: 'p1', title: 'Basic Stay', desc: 'Standard room access.', iconType: 'home' },
-            { id: 'p2', title: 'Premium Suite', desc: 'Luxury quarters upgrade.', iconType: 'star' },
-            { id: 'p3', title: 'Event Hall', desc: 'Access to gardens and main hall.', iconType: 'sparkles' }
-          ],
-          timestamp: Date.now(),
-          userName: name,
-          userEmail: email.trim().toLowerCase()
-        };
-
-        const result = await cloudSync.createAccount(email, password, initialState);
+        const result = await cloudSync.createAccount(email, password, name);
         
-        if (result.success) {
-          if (result.confirmationRequired) {
-            setSuccess("Account created! Check your email for a confirmation link to activate your dashboard.");
-            setIsLogin(true);
-            setIsLoading(false);
-          } else {
-            // Auto-login happened
-            setSuccess("Account initialized! Launching dashboard...");
-            const loginRes = await cloudSync.login(email, password);
-            if (loginRes.ok) {
-              onLogin(email, password, loginRes.state);
-            } else {
-              setError("Account created but auto-login failed: " + loginRes.error);
-              setIsLoading(false);
-            }
-          }
+        if (result.ok) {
+          // Success (includes cases where auto-login worked)
+          setSuccess("Account Provisioned! Redirecting to Dashboard...");
+          onLogin(email, password, result.state);
         } else {
-          setError(result.error || "Signup failed. Ensure your password is at least 6 characters.");
+          const msg = result.error.toLowerCase();
+          if (msg.includes("confirmation required")) {
+            setSuccess("Account Created! Please verify your email to log in.");
+            setIsLogin(true);
+          } else {
+            setError(result.error || "Registration failed. Ensure your password is at least 6 characters.");
+          }
           setIsLoading(false);
         }
       }
     } catch (err: any) {
-      console.error("Critical Auth UI Error:", err);
-      setError("A critical system error occurred: " + (err.message || "Unknown error"));
+      console.error("Critical Auth Handshake Failure:", err);
+      setError("System Exception: " + (err.message || "Unknown error during authentication handshake."));
       setIsLoading(false);
     }
   };
@@ -153,7 +129,7 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
           {info && (
             <div className="mb-8 p-4 bg-blue-50 border border-blue-100 rounded-2xl text-blue-600 text-[10px] font-black uppercase tracking-widest flex items-center gap-3 animate-in slide-in-from-top-2">
               <Info className="w-4 h-4 shrink-0" />
-              {info}
+              <span className="break-words">{info}</span>
             </div>
           )}
 
@@ -204,7 +180,7 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
               {isLoading ? (
                 <Loader2 className="w-5 h-5 animate-spin" />
               ) : (
-                <>{isLogin ? 'Sign In to Dashboard' : 'Create Account'} <ArrowRight className="w-4 h-4" /></>
+                <>{isLogin ? 'Sign In to Dashboard' : 'Initialize Workspace'} <ArrowRight className="w-4 h-4" /></>
               )}
             </button>
           </form>
@@ -214,14 +190,14 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
               onClick={() => { setIsLogin(!isLogin); setError(null); setSuccess(null); setInfo(null); }}
               className="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-emerald-600 transition-colors"
             >
-              {isLogin ? "Don't have an account? Register" : "Already have an account? Sign In"}
+              {isLogin ? "Don't have an account? Create one" : "Already have an account? Sign In"}
             </button>
           </div>
 
           <div className="mt-12 flex items-center justify-center pt-8 border-t border-slate-50">
             <div className="flex items-center gap-2 text-[9px] text-slate-300 font-black uppercase tracking-widest opacity-60">
               <ShieldCheck className="w-3.5 h-3.5" /> 
-              Secure Encrypted Portal
+              Encrypted Production Handshake
             </div>
           </div>
         </div>

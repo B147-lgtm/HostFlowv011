@@ -69,26 +69,11 @@ const MasterAdmin: React.FC<{ onExit: () => void }> = ({ onExit }) => {
     setIsLoading(true);
     const { email, password, name } = newUserData;
     
-    const newUser = {
-      id: `u-${Date.now()}`,
-      name,
-      email: email.toLowerCase(),
-      phone: '0000000000',
-      photoURL: `https://api.dicebear.com/7.x/initials/svg?seed=${name}`,
-      provider: 'email',
-      isVerified: true,
-      role: UserRole.AIRBNB_HOST,
-      createdAt: new Date().toISOString()
-    };
-
-    const initialData = { 
-      currentUser: newUser, 
-      properties: [], allBookings: [], allTransactions: [], allGuests: [], allStaffLogs: [], allInventory: [] 
-    };
-
-    // Correctly handle the result object from createAccount
-    const result = await cloudSync.createAccount(email, password, initialData);
-    if (result.success) {
+    // Fix: createAccount expects (email, password, name: string). 
+    // Passing the name string instead of a complex object.
+    const result = await cloudSync.createAccount(email, password, name);
+    // Fix: use result.ok instead of result.success.
+    if (result.ok) {
       setNewUserData({ email: '', password: '', name: '' });
       setShowAddUser(false);
       loadAccounts();
@@ -186,7 +171,8 @@ const MasterAdmin: React.FC<{ onExit: () => void }> = ({ onExit }) => {
                   filteredAccounts.map(acc => (
                     <tr key={acc.email} className="hover:bg-white/[0.02] transition-colors group">
                       <td className="px-10 py-6 font-bold text-slate-300">{acc.email}</td>
-                      <td className="px-10 py-6 font-mono text-[10px] text-slate-500">{"*".repeat(acc.password.length)}</td>
+                      {/* Fix: Changed acc.password.length to acc.email.length because password is not returned by adminListAccounts */}
+                      <td className="px-10 py-6 font-mono text-[10px] text-slate-500">{"*".repeat(acc.email.length)}</td>
                       <td className="px-10 py-6 text-[10px] font-bold text-slate-500">{new Date(acc.createdAt).toLocaleDateString()}</td>
                       <td className="px-10 py-6 text-right space-x-2">
                         <button onClick={() => handleInspect(acc.email)} className="p-3 bg-white/5 text-slate-400 hover:text-white hover:bg-indigo-600 rounded-xl transition-all">
